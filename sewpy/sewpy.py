@@ -33,7 +33,7 @@ To do:
 
 
 """
-
+import logging
 import os
 import numpy
 import astropy
@@ -42,18 +42,14 @@ import astropy.io
 import subprocess
 import tempfile
 import re
-import copy
 from datetime import datetime
-import numpy as np
-
-import logging
-
-logger = logging.getLogger(__name__)
 
 defaultparams = ["XWIN_IMAGE", "YWIN_IMAGE", "AWIN_IMAGE", "BWIN_IMAGE", "THETAWIN_IMAGE",
                  "BACKGROUND",
                  "FLUX_AUTO"]
 defaultconfig = {}
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler())
 
 
 class SEW:
@@ -62,7 +58,7 @@ class SEW:
     """
 
     def __init__(self, workdir=None, sexpath="sex", params=None, config=None, configfilepath=None,
-                 nice=None, loglevel=None, clean_files=False):
+                 nice=None, loglevel="CRITICAL", clean_files=False):
         """
         All arguments have default values and are optional.
 
@@ -144,7 +140,7 @@ class SEW:
         # ... and the params:
 
         if params is None:
-            self.params = defaultparams
+            self.params = defaultparams[:]
         else:
             self.params = params
         self._check_params()
@@ -152,7 +148,7 @@ class SEW:
         # ... and the config:
 
         if config is None:
-            self.config = defaultconfig
+            self.config = defaultconfig.copy()
         else:
             self.config = config
 
@@ -283,7 +279,6 @@ class SEW:
         """
         return os.path.join(self.workdir, imgname + ".fits")
 
-
     def _write_params(self, force=False):
         """
         Writes the parameters to the file, if needed.
@@ -351,6 +346,7 @@ class SEW:
 
         hdu = astropy.io.fits.PrimaryHDU(data)
         hdu.writeto(self._get_image_filepath(imgname), clobber=True)
+        self._created_files.append(self._get_image_filepath(imgname))
 
     def _clean_workdir(self):
         """
@@ -436,12 +432,11 @@ class SEW:
         """
 
         starttime = datetime.now()
-
         # It's data not a string
         if type(imgfilepath) is numpy.ndarray:
             data = imgfilepath
             if imgname is None:
-                imgname = "sew_image"
+                imgname = "sew_file"
             imgfilepath = self._get_image_filepath(imgname)
             self._write_image_data(data, imgname)
 
@@ -456,7 +451,7 @@ class SEW:
 
         # We make a deep copy of the config, that we can modify with settings related to this
         # particular image.
-        imgconfig = copy.deepcopy(self.config)
+        imgconfig = self.config.copy()
 
         # We set the catalog name :
         imgconfig["CATALOG_NAME"] = self._get_cat_filepath(imgname)
@@ -553,6 +548,7 @@ class SEW:
                 "It seems that SExtractor did not write the file '%s'. Check SExtractor log: %s" % (
                     self._get_cat_filepath(imgname), self._get_log_filepath(imgname)))
 
+        self._created_files.append(self._get_cat_filepath(imgname))
         # We return a dict. It always contains at least the path to the sextractor catalog:
         output = {"catfilepath": self._get_cat_filepath(imgname), "workdir": self.workdir}
         if writelog:
@@ -570,7 +566,7 @@ class SEW:
             else:  # We have to process the output catalog, merging it.
 
                 # We add the "number" column to the assoc_cat, calling it VECTOR_ASSOC_2:
-                intable = copy.deepcopy(assoc_cat)
+                intable = assoc_cat
                 intable["VECTOR_ASSOC_2"] = range(len(assoc_cat))
 
                 # We read in the SExtractor output:
@@ -583,8 +579,8 @@ class SEW:
                 # Due to what seems to be a bug in SExtractor (version 2.19.5 and earlier),
                 # we need to kick out "duplicated" (same VECTOR_ASSOC_2) rows.
                 # That's weird, as in principle we asked to keep the NEAREST !
-                sortedassoc = np.sort(sextable["VECTOR_ASSOC_2"].data)
-                duplassoc = list(np.unique(sortedassoc[sortedassoc[1:] == sortedassoc[:-1]]))
+                sortedassoc = numpy.sort(sextable["VECTOR_ASSOC_2"].data)
+                duplassoc = list(numpy.unique(sortedassoc[sortedassoc[1:] == sortedassoc[:-1]]))
                 # The unique is here as there might be more than 2 identical numbers...
                 if len(duplassoc) > 0:
                     logger.warning(
@@ -654,6 +650,9 @@ class SEW:
                 if os.path.exists(created_file):
                     logger.debug("Removing created file %s..." % created_file)
                     os.remove(created_file)
+            if self.tmp:
+                logger.debug("Removing directory %s..." % self.workdir)
+                os.rmdir(self.workdir)
 
     #	def destroy(self):
     #		"""
